@@ -1,6 +1,4 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-
-import { registerPrompts } from './game/prompts.js';
 import { registerResources } from './game/resources.js';
 import { McpServer } from './mcp/server.js';
 import { TransportAdapter } from './mcp/transport-adapter.js';
@@ -8,8 +6,7 @@ import type { McpRequest, McpResponse, McpNotification } from './types/mcp.js';
 
 async function main() {
   try {
-    // console.log('Starting MUD MCP Server...');
-    
+
     // Create our MCP server
     const server = new McpServer({
       name: 'MUD MCP Server',
@@ -18,7 +15,7 @@ async function main() {
     });
 
     // Register game components
-    registerPrompts(server);
+    
     registerResources(server);
 
     // Create transport with our adapter
