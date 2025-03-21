@@ -6,7 +6,7 @@ export const initialRooms: { [roomId: string]: Room } = {
   'entrance': {
     id: 'entrance',
     name: 'Dungeon Entrance',
-    description: 'You are at the entrance of a dark and foreboding dungeon. The stone walls glisten with moisture, and the air smells of earth and decay.',
+    description: 'You are at the entrance of a dark and foreboding dungeon.',
     exits: {
       'north': 'hallway'
     },

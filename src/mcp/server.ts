@@ -13,6 +13,7 @@ import type {
 import stateService from '../services/stateService.js';
 import toolsService from '../services/toolsService.js';
 import promptsService from '../services/promptsService.js';
+import { initializeLogging, logToFile } from '../config/system.js';
 
 export type ToolHandler = (params: Record<string, unknown>, context: McpContext) => Promise<ToolResult>;
 export type PromptHandler = (params: Record<string, unknown>, context: McpContext) => Promise<PromptResult>;
@@ -36,6 +37,9 @@ export class McpServer extends EventEmitter {
     super();
     this.options = options;
 
+    // Initialize logging system
+    initializeLogging();
+
     // Listen for state changes
     stateService.on('TOOLS_CHANGED', async ({ playerId }) => {
       await this.notifyToolsChanged(playerId);
@@ -49,33 +53,72 @@ export class McpServer extends EventEmitter {
   private async notifyToolsChanged(playerId: string): Promise<void> {
     if (!this.transportSend) return;
 
-    // console.log(`[MCP] Notifying tools changed for player: ${playerId}`);
-    
+    logToFile(`[Notify] Tools changed for player: ${playerId}`, 'mcp-server.log');
+
     const availableTools = toolsService.getAvailableTools(playerId);
+    
     const notification = {
       jsonrpc: '2.0',
       method: 'notifications/tools/list_changed',
       params: {
-        tools: availableTools.map(tool => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.parameters 
-            ? { type: 'object', properties: tool.parameters, required: [] }
-            : { }
-        }))
+        tools: availableTools.map((tool) => {
+          const toolRes: {
+            name: string;
+            description?: string;
+            inputSchema: {
+              type: "object";
+              properties?: Record<string, any>;
+              required?: string[];
+            };
+          } = {
+            name: tool.name,
+            description: tool.description,
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              required: []
+            }
+          };
+
+          if (tool.parameters) {
+            // Convert parameters to a proper object mapping
+            const propertiesObj: Record<string, any> = {};
+            
+            // Create the properties object with correct structure
+            Object.entries(tool.parameters).forEach(([key, parameter]) => {
+              propertiesObj[key] = {
+                description: parameter.description,
+                type: parameter.type
+              };
+            });
+            
+            toolRes.inputSchema = {
+              type: 'object',
+              properties: propertiesObj,
+              required: Object.keys(tool.parameters).filter(
+                key => (tool.parameters ?? {})[key]?.required === true
+              )
+            };
+          }
+
+          return toolRes;
+        })
       }
     };
-    
+
+    logToFile(`[Response] Tools notify change: ${JSON.stringify(notification)}`, 'mcp-server.log');
+
     await this.sendMessage(notification);
   }
 
   private async notifyPromptsChanged(playerId: string): Promise<void> {
     if (!this.transportSend) return;
-    
+
+    logToFile(`[Notify] Prompts changed for player: ${playerId}`, 'mcp-server.log');
+
     const playerState = stateService.getPlayerState(playerId);
     if (!playerState) return;
 
-    // Use promptsService to get available prompts based on player state
     const availablePrompts = promptsService.getAvailablePrompts(playerId);
 
     const notification = {
@@ -85,7 +128,7 @@ export class McpServer extends EventEmitter {
         prompts: availablePrompts
       }
     };
-    
+
     await this.sendMessage(notification);
   }
 
@@ -101,15 +144,15 @@ export class McpServer extends EventEmitter {
   // Unified message sending method
   private async sendMessage(message: any): Promise<void> {
     if (!this.transportSend) {
-      // console.log('[MCP] Cannot send message - no transport send method');
+      logToFile('[Error] Cannot send message - no transport send method', 'mcp-server.log');
       return;
     }
 
     try {
-      // console.log(`[MCP] Sending message: ${JSON.stringify(message)}`);
+      logToFile(`[Send] Sending message: ${JSON.stringify(message)}`, 'mcp-server.log');
       await this.transportSend(message);
     } catch (error) {
-      // console.log(`[MCP] Error sending message:`, error);
+      logToFile(`[Error] Failed to send message: ${error}`, 'mcp-server.log');
     }
   }
 
@@ -127,6 +170,7 @@ export class McpServer extends EventEmitter {
 
   public async handleRequest(request: any): Promise<any> {
     try {
+      logToFile(`[Request] Handling request: ${JSON.stringify(request)}`, 'mcp-server.log');
       const { method, params = {}, id } = request;
 
       // For all non-initialize requests, ensure we have a valid session
@@ -207,24 +251,62 @@ export class McpServer extends EventEmitter {
             throw new Error(`Session '${params.sessionId}' not found`);
           }
           const availableTools = toolsService.getAvailableTools(playerState?.player_id);
-          // console.log(`[MCP] Available tools: ${availableTools.map(tool => tool.name).join(', ')}`);
-          return {
+          const res = {
             jsonrpc: '2.0',
             id,
             result: {
-              tools: availableTools.map((tool) => ({
-                name: tool.name,
-                description: tool.description,
-                inputSchema: tool.parameters
-                  ? { type: 'object', properties: 
-                    tool.parameters, required: [] }
-                  : { type: 'object' }
-              }))
+              tools: availableTools.map((tool) => {
+                const toolRes: {
+                  name: string;
+                  description?: string;
+                  inputSchema: {
+                    type: "object";
+                    properties?: Record<string, any>;
+                    required?: string[];
+                  };
+                } = {
+                  name: tool.name,
+                  description: tool.description,
+                  inputSchema: {
+                    type: 'object',
+                    properties: {},
+                    required: []
+                  }
+                };
+
+                if (tool.parameters) {
+                  // Convert parameters to a proper object mapping
+                  const propertiesObj: Record<string, any> = {};
+                  
+                  // Create the properties object with correct structure
+                  Object.entries(tool.parameters).forEach(([key, parameter]) => {
+                    propertiesObj[key] = {
+                      description: parameter.description,
+                      type: parameter.type
+                    };
+                  });
+                  
+                  toolRes.inputSchema = {
+                    type: 'object',
+                    properties: propertiesObj,
+                    required: Object.keys(tool.parameters).filter(
+                      key => (tool.parameters ?? {})[key]?.required === true
+                    )
+                  };
+                }
+
+                return toolRes;
+              })
             }
           };
 
+          logToFile(`[Response] Tools list: ${JSON.stringify(res)}`, 'mcp-server.log');
+
+          return res;
+
         case 'tools/call': {
           // console.log(`[MCP] Processing tools/call request for ${params.name}`);
+          logToFile(`[Request] Tools call: ${JSON.stringify(params)}`, 'mcp-server.log');
           const { name, arguments: inputArgs = {} } = params as { name: string; arguments: Record<string, unknown> };
           session = stateService.getSession(params.sessionId);
           playerState = stateService.getPlayerState(session.playerId);
@@ -346,7 +428,7 @@ export class McpServer extends EventEmitter {
           throw new Error(`Method '${method}' not found`);
       }
     } catch (error) {
-      // console.log(`[MCP] Error handling request:`, error);
+      logToFile(`[Error] Error handling request: ${error}`, 'mcp-server.log');
       throw error;
     }
   }
@@ -385,6 +467,7 @@ export class McpServer extends EventEmitter {
   }
 
   close(): void {
+    logToFile('[Close] Closing server', 'mcp-server.log');
     // console.log('[MCP] Closing server');
   }
 }

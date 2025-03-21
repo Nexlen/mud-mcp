@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import type { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { McpRequest, McpResponse, McpNotification } from '../types/mcp.js';
 import type { JSONRPCMessage, JSONRPCRequest, JSONRPCError, JSONRPCResponse, JSONRPCNotification } from '@modelcontextprotocol/sdk/types.js';
+import { initializeLogging, logToFile } from '../config/system.js';
 
 export class TransportAdapter extends EventEmitter {
   private sdkTransport: StdioServerTransport;
@@ -10,16 +11,19 @@ export class TransportAdapter extends EventEmitter {
 
   constructor(sdkTransport: StdioServerTransport) {
     super();
-    // console.log('[TransportAdapter] Initializing with SDK transport');
     this.sdkTransport = sdkTransport;
+
+    // Initialize logging system
+    initializeLogging();
 
     // Set up data handler for incoming chunks
     process.stdin.on('data', (chunk: Buffer) => {
+      logToFile(`[Data] Received chunk: ${chunk.toString()}`, 'transport-adapter.log');
       this.handleData(chunk);
     });
 
     process.stdin.on('endpoint', (message: string) => {
-      // console.log('[TransportAdapter] Endpoint message:', message);
+      logToFile(`[Endpoint] ${message}`, 'transport-adapter.log');
     })
   }
 
@@ -34,9 +38,6 @@ export class TransportAdapter extends EventEmitter {
   }
 
   private handleData(chunk: Buffer): void {
-    // console.log('[TransportAdapter] Processing chunk:', chunk.toString());
-    
-    // Append to buffer and process complete messages
     this.messageBuffer += chunk.toString('utf8');
     
     let newlineIndex: number;
@@ -47,32 +48,29 @@ export class TransportAdapter extends EventEmitter {
       if (line.trim()) {
         try {
           const message = JSON.parse(line);
-          // console.log('[TransportAdapter] Emitting message:', message);
           this.emit('message', message);
         } catch (e) {
-          // console.log('[TransportAdapter] Failed to parse message:', line, e);
+          logToFile(`[Error] Failed to parse message: ${line}, Error: ${e}`, 'transport-adapter.log');
         }
       }
     }
   }
 
   public onMessage(handler: (message: McpRequest | McpNotification) => void): void {
-    // console.log('[TransportAdapter] Message handler registered');
     this.on('message', handler);
   }
 
   public onClose(handler: () => void): void {
-    // console.log('[TransportAdapter] Close handler registered');
     this.on('close', handler);
-    
+
     process.on('exit', () => {
-      // console.log('[TransportAdapter] Process exit detected');
+      logToFile('[Exit] Process exit detected', 'transport-adapter.log');
       this.emit('close');
     });
   }
 
   public async send(message: McpResponse | McpNotification): Promise<void> {
-    // console.log('[TransportAdapter] Sending message:', JSON.stringify(message));
+    logToFile(`[Send] Sending message: ${JSON.stringify(message)}`, 'transport-adapter.log');
     
     if ('id' in message) {
       // It's a response
@@ -87,7 +85,7 @@ export class TransportAdapter extends EventEmitter {
             data: message.error.data
           }
         };
-        return this.sdkTransport.send(errorResponse);
+        return this.sdkTransport.send(errorResponse); 
       } else {
         // Success response
         const successResponse: JSONRPCResponse = {
@@ -95,7 +93,6 @@ export class TransportAdapter extends EventEmitter {
           id: message.id,
           result: {
             ...message.result as Record<string, unknown>,
-            _meta: {}
           }
         };
         return this.sdkTransport.send(successResponse);
@@ -112,12 +109,17 @@ export class TransportAdapter extends EventEmitter {
   }
 
   public async start(): Promise<void> {
-    // console.log('[TransportAdapter] Starting transport');
-    return this.sdkTransport.start();
+    logToFile('[Start] Starting transport', 'transport-adapter.log');
+    try {
+      return this.sdkTransport.start();
+    } catch (error) {
+      logToFile(`[Error] Failed to start transport: ${error}`, 'transport-adapter.log');
+      throw error;
+    }
   }
 
   public async close(): Promise<void> {
-    // console.log('[TransportAdapter] Closing transport');
+    logToFile('[Close] Closing transport', 'transport-adapter.log');
     await this.sdkTransport.close();
     this.emit('close');
   }

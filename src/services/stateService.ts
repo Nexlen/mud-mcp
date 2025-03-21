@@ -65,13 +65,13 @@ class StateService extends EventEmitter {
 
     // Update player location
     playerState.room = nextRoomId;
-    
+
     // Update monster presence based on new room
     const hadMonster = playerState.monsterPresent;
     playerState.monsterPresent = nextRoom.monsters && nextRoom.monsters.length > 0;
     
     // Emit events for tool/prompt changes if needed
-    if (hadMonster !== playerState.monsterPresent) {
+    if (hadMonster !== playerState.monsterPresent || nextRoom.items.length > 0) {
       this.emit('TOOLS_CHANGED', { playerId });
       this.emit('PROMPTS_CHANGED', { playerId });
     }
