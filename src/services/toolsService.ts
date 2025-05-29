@@ -57,12 +57,48 @@ class ToolsService extends EventEmitter {
       };
     }
   }
-
   /**
-   * Get all available tools
+   * Get all available tools based on player's current state
    */
-  getAvailableTools(): Tool[] {
-    return Object.values(this.tools);
+  getAvailableTools(playerId?: string): Tool[] {
+    if (!playerId) {
+      // Return basic tools if no player context
+      return [this.tools.look, this.tools.inventory].filter(Boolean);
+    }
+
+    const playerState = stateService.getPlayerState(playerId);
+    if (!playerState) {
+      return [this.tools.look, this.tools.inventory].filter(Boolean);
+    }
+
+    const world = stateService.getWorld();
+    const room = world.rooms[playerState.room];
+    if (!room) {
+      return [this.tools.look, this.tools.inventory].filter(Boolean);
+    }
+
+    const availableTools: Tool[] = [];
+
+    // Always available tools
+    if (this.tools.look) availableTools.push(this.tools.look);
+    if (this.tools.inventory) availableTools.push(this.tools.inventory);
+
+    // Movement tools - available if there are exits
+    if (Object.keys(room.exits).length > 0 && this.tools.move) {
+      availableTools.push(this.tools.move);
+    }
+
+    // Take tool - available if there are items in the room
+    if (room.items.length > 0 && this.tools.take) {
+      availableTools.push(this.tools.take);
+    }
+
+    // Battle tool - available if there are monsters in the room
+    if (room.monsters.length > 0 && this.tools.battle) {
+      availableTools.push(this.tools.battle);
+    }
+
+    return availableTools;
   }
 
   // ========== TOOL HANDLERS ==========
@@ -115,9 +151,8 @@ class ToolsService extends EventEmitter {
           return item ? item.name : itemId;
         }).join(', ')}.` 
       : '\nThere are no items here.';
-    
-    // Describe any monsters present
-    const monsterText = playerState.monsterPresent && room.monsters.length > 0
+      // Describe any monsters present
+    const monsterText = room.monsters.length > 0
       ? `\nA ${room.monsters.map(monsterId => {
           const monster = monsters[monsterId];
           return monster ? monster.name : monsterId;
@@ -190,10 +225,11 @@ class ToolsService extends EventEmitter {
           content: [{ type: 'text', text: 'Error: Target room not found.' }],
           isError: true
         };
-      }
-
-      // Update player's room
+      }      // Update player's room
       stateService.updatePlayerRoom(session.playerId, targetRoomId);
+      
+      // Emit tools changed since available tools depend on room contents
+      stateService.emit('TOOLS_CHANGED', { playerId: session.playerId });
       
       return {
         content: [{ 
@@ -290,23 +326,31 @@ class ToolsService extends EventEmitter {
         content: [{ type: 'text', text: 'Error: Invalid room.' }],
         isError: true
       };
-    }
-
-    // Find the item ID by name
+    }    // Find the item ID by name
     const itemId = Object.keys(items).find(id => 
       items[id].name.toLowerCase() === item.toLowerCase()
     );
 
     if (!itemId || !room.items.includes(itemId)) {
+      // Debug info - let's see what's actually in the room
+      const availableItems = room.items.map(id => items[id]?.name || id).join(', ');
+      const debugText = room.items.length > 0 
+        ? `Available items in this room: ${availableItems}. Looking for: ${item}`
+        : `No items in this room. Looking for: ${item}`;
+      
       return {
-        content: [{ type: 'text', text: `There is no ${item} here to take.` }],
+        content: [{ 
+          type: 'text', 
+          text: `There is no ${item} here to take. ${debugText}` 
+        }],
         isError: false
       };
-    }
-
-    // Add to inventory and remove from room
+    }// Add to inventory and remove from room
     stateService.addItemToInventory(session.playerId, itemId);
     stateService.removeItemFromRoom(playerState.room, itemId);
+
+    // Emit tools changed since items in room changed
+    stateService.emit('TOOLS_CHANGED', { playerId: session.playerId });
 
     return {
       content: [{ 
@@ -314,6 +358,87 @@ class ToolsService extends EventEmitter {
         text: `You take the ${items[itemId].name}.` 
       }]
     };
+  };
+
+  /**
+   * Battle a monster in the room
+   */
+  private battleHandler = async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
+    if (!context.sessionId) {
+      return {
+        content: [{ type: 'text', text: 'Error: Session initialization failed.' }],
+        isError: true
+      };
+    }
+
+    const session = stateService.getSession(context.sessionId);
+    if (!session) {
+      return {
+        content: [{ type: 'text', text: 'Error: Invalid session. Please try again.' }],
+        isError: true
+      };
+    }
+
+    const { monster } = params as { monster: string };
+    const playerState = stateService.getPlayerState(session.playerId);
+    if (!playerState) {
+      return {
+        content: [{ type: 'text', text: 'Error: Could not find player state. Please try again.' }],
+        isError: true
+      };
+    }
+
+    const world = stateService.getWorld();
+    const room = world.rooms[playerState.room];
+    if (!room) {
+      return {
+        content: [{ type: 'text', text: 'Error: Invalid room.' }],
+        isError: true
+      };
+    }
+
+    // Find the monster by name
+    const monsterId = Object.keys(monsters).find(id => 
+      monsters[id].name.toLowerCase() === monster.toLowerCase()
+    );
+
+    if (!monsterId || !room.monsters.includes(monsterId)) {
+      return {
+        content: [{ type: 'text', text: `There is no ${monster} here to battle.` }],
+        isError: false
+      };
+    }
+
+    const monsterData = monsters[monsterId];
+    
+    // Simple battle logic - player has 50% chance to win
+    const playerWins = Math.random() > 0.5;
+    
+    if (playerWins) {
+      // Remove monster from room
+      const roomData = world.rooms[playerState.room];
+      roomData.monsters = roomData.monsters.filter(id => id !== monsterId);
+      
+      // Update player state
+      stateService.updatePlayerRoom(session.playerId, playerState.room);
+      
+      // Emit tools changed since monsters in room changed
+      stateService.emit('TOOLS_CHANGED', { playerId: session.playerId });
+      
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `You successfully defeat the ${monsterData.name}! The creature falls and disappears into shadows.` 
+        }]
+      };
+    } else {
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `The ${monsterData.name} proves too strong! You retreat but remain in the room. Try again when you're ready.` 
+        }]
+      };
+    }
   };
 
   /**
@@ -378,9 +503,7 @@ class ToolsService extends EventEmitter {
         idempotentHint: true,
         openWorldHint: false
       }
-    }, this.inventoryHandler);
-
-    // Take tool - state-changing operation
+    }, this.inventoryHandler);    // Take tool - state-changing operation
     this.registerTool({
       name: 'take',
       description: 'Take an item from the current room and add it to your inventory.',
@@ -402,6 +525,29 @@ class ToolsService extends EventEmitter {
         openWorldHint: false
       }
     }, this.takeHandler);
+
+    // Battle tool - destructive operation
+    this.registerTool({
+      name: 'battle',
+      description: 'Engage in combat with a monster in the current room.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          monster: {
+            type: 'string',
+            description: 'The name of the monster to battle'
+          }
+        },
+        required: ['monster']
+      },
+      annotations: {
+        title: 'Battle Monster',
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false
+      }
+    }, this.battleHandler);
   }
 }
 

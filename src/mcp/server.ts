@@ -50,13 +50,12 @@ export class McpServer extends EventEmitter {
       await this.notifyPromptsChanged(playerId);
     });
   }
-
   private async notifyToolsChanged(playerId: string): Promise<void> {
     if (!this.transportSend) return;
 
     logToFile(`[Notify] Tools changed for player: ${playerId}`, 'mcp-server.log');
 
-    const availableTools = toolsService.getAvailableTools();
+    const availableTools = toolsService.getAvailableTools(playerId);
     
     const notification = {
       jsonrpc: '2.0',
@@ -230,7 +229,9 @@ export class McpServer extends EventEmitter {
             }
           };        case 'tools/list':
           // console.log('[MCP] Processing tools/list request');
-          const availableTools = toolsService.getAvailableTools();
+          session = stateService.getSession(params.sessionId);
+          const sessionPlayerId = session?.playerId;
+          const availableTools = toolsService.getAvailableTools(sessionPlayerId);
           const res = {
             jsonrpc: '2.0',
             id,
@@ -256,7 +257,7 @@ export class McpServer extends EventEmitter {
           if (!playerState) {
             throw new Error(`Session '${params.sessionId}' not found`);
           }
-          const availableTools = toolsService.getAvailableTools();
+          const availableTools = toolsService.getAvailableTools(playerState.player_id);
           const tool = availableTools.find(tool => tool.name === name);
           if (!tool) {
             throw new Error(`Tool '${name}' not found`);
