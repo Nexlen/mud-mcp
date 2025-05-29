@@ -153,6 +153,37 @@ class StateService extends EventEmitter {
 
     return { success, monsterName };
   }
+
+  updatePlayerRoom(playerId: string, roomId: string): boolean {
+    const playerState = this.getPlayerState(playerId);
+    if (!playerState) return false;
+
+    const targetRoom = this.world.rooms[roomId];
+    if (!targetRoom) return false;
+
+    const oldRoom = playerState.room;
+    playerState.room = roomId;
+
+    // Update monster presence based on new room
+    const hadMonster = playerState.monsterPresent;
+    playerState.monsterPresent = targetRoom.monsters && targetRoom.monsters.length > 0;
+    
+    // Emit events for tool/prompt changes if room changed significantly
+    if (hadMonster !== playerState.monsterPresent || targetRoom.items.length > 0 || oldRoom !== roomId) {
+      this.emit('TOOLS_CHANGED', { playerId });
+      this.emit('PROMPTS_CHANGED', { playerId });
+    }
+
+    return true;
+  }
+
+  removeItemFromRoom(roomId: string, itemId: string): boolean {
+    const room = this.world.rooms[roomId];
+    if (!room || !room.items.includes(itemId)) return false;
+
+    room.items = room.items.filter(id => id !== itemId);
+    return true;
+  }
 }
 
 export default new StateService();

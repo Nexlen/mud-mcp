@@ -91,18 +91,29 @@ export type GameEvent =
   | { type: 'TOOLS_CHANGED', playerId: string }
   | { type: 'PROMPTS_CHANGED', playerId: string };
 
-// Tool Types
+// Tool Types (Updated for MCP 2025-03-26)
 export interface Tool {
   name: string;
   description: string;
-  parameters?: {
-    [paramName: string]: {
-      description: string;
-      required: boolean;
-      type: string;
-    };
+  inputSchema: {
+    type: "object";
+    properties?: Record<string, any>;
+    required?: string[];
   };
-  execute: (params: Record<string, unknown>, context: McpContext) => Promise<ToolResponse>;
+  annotations?: {
+    title?: string;
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
+}
+
+export interface ToolParameter {
+  type: string;
+  description: string;
+  required?: boolean;
+  enum?: string[];
 }
 
 export interface ToolResponse {
@@ -113,12 +124,21 @@ export interface ToolResponse {
   isError?: boolean;
 }
 
-// Prompt Types
+// Prompt Types (Updated for MCP 2025-03-26)
 export interface Prompt {
   name: string;
   description: string;
-  isAvailable: (playerState: PlayerState) => boolean;
-  generate: (playerState: PlayerState) => Promise<PromptResponse>;
+  arguments?: Array<{
+    name: string;
+    description?: string;
+    required?: boolean;
+  }>;
+}
+
+export interface PromptArgument {
+  name: string;
+  description?: string;
+  required?: boolean;
 }
 
 export interface PromptResponse {

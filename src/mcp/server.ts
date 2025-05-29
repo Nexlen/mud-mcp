@@ -10,6 +10,7 @@ import type {
   ResourceResult,
   McpContext,
 } from '../types/mcp.js';
+import type { Prompt } from '../types/index.js';
 import stateService from '../services/stateService.js';
 import toolsService from '../services/toolsService.js';
 import promptsService from '../services/promptsService.js';
@@ -55,7 +56,7 @@ export class McpServer extends EventEmitter {
 
     logToFile(`[Notify] Tools changed for player: ${playerId}`, 'mcp-server.log');
 
-    const availableTools = toolsService.getAvailableTools(playerId);
+    const availableTools = toolsService.getAvailableTools();
     
     const notification = {
       jsonrpc: '2.0',
@@ -78,26 +79,13 @@ export class McpServer extends EventEmitter {
               properties: {},
               required: []
             }
-          };
-
-          if (tool.parameters) {
-            // Convert parameters to a proper object mapping
-            const propertiesObj: Record<string, any> = {};
-            
-            // Create the properties object with correct structure
-            Object.entries(tool.parameters).forEach(([key, parameter]) => {
-              propertiesObj[key] = {
-                description: parameter.description,
-                type: parameter.type
-              };
-            });
+          };          if (tool.inputSchema && tool.inputSchema.properties) {
+            const propertiesObj: Record<string, any> = tool.inputSchema.properties;
             
             toolRes.inputSchema = {
               type: 'object',
               properties: propertiesObj,
-              required: Object.keys(tool.parameters).filter(
-                key => (tool.parameters ?? {})[key]?.required === true
-              )
+              required: tool.inputSchema.required || []
             };
           }
 
@@ -204,11 +192,10 @@ export class McpServer extends EventEmitter {
       let session: any = null;
 
       switch (method) {
-        case 'initialize':
-          session = stateService.createSession();
+        case 'initialize':          session = stateService.createSession();
 
           // console.log('[MCP] Processing initialize request');
-          toolsService.registerDefaultTools();
+          // Tools are registered automatically in toolsService constructor
           playerState = stateService.getPlayerState(session.id);
           // Notification Issue https://github.com/orgs/modelcontextprotocol/discussions/76
           stateService.emit('TOOLS_CHANGED', { playerId: playerState?.player_id});
@@ -241,62 +228,18 @@ export class McpServer extends EventEmitter {
               // Add instructions to help the client understand our server
               instructions: "This MUD server provides tools for exploring a text-based adventure. Use 'look' to examine your surroundings, 'move' to navigate between rooms, and 'pick_up' to collect items."
             }
-          };
-
-        case 'tools/list':
+          };        case 'tools/list':
           // console.log('[MCP] Processing tools/list request');
-          session = stateService.getSession(params.sessionId);
-          playerState = stateService.getPlayerState(session.playerId);
-          if (!playerState) {
-            throw new Error(`Session '${params.sessionId}' not found`);
-          }
-          const availableTools = toolsService.getAvailableTools(playerState?.player_id);
+          const availableTools = toolsService.getAvailableTools();
           const res = {
             jsonrpc: '2.0',
             id,
             result: {
-              tools: availableTools.map((tool) => {
-                const toolRes: {
-                  name: string;
-                  description?: string;
-                  inputSchema: {
-                    type: "object";
-                    properties?: Record<string, any>;
-                    required?: string[];
-                  };
-                } = {
-                  name: tool.name,
-                  description: tool.description,
-                  inputSchema: {
-                    type: 'object',
-                    properties: {},
-                    required: []
-                  }
-                };
-
-                if (tool.parameters) {
-                  // Convert parameters to a proper object mapping
-                  const propertiesObj: Record<string, any> = {};
-                  
-                  // Create the properties object with correct structure
-                  Object.entries(tool.parameters).forEach(([key, parameter]) => {
-                    propertiesObj[key] = {
-                      description: parameter.description,
-                      type: parameter.type
-                    };
-                  });
-                  
-                  toolRes.inputSchema = {
-                    type: 'object',
-                    properties: propertiesObj,
-                    required: Object.keys(tool.parameters).filter(
-                      key => (tool.parameters ?? {})[key]?.required === true
-                    )
-                  };
-                }
-
-                return toolRes;
-              })
+              tools: availableTools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                inputSchema: tool.inputSchema
+              }))
             }
           };
 
@@ -313,12 +256,12 @@ export class McpServer extends EventEmitter {
           if (!playerState) {
             throw new Error(`Session '${params.sessionId}' not found`);
           }
-          const availableTools = toolsService.getAvailableTools(playerState?.player_id);
+          const availableTools = toolsService.getAvailableTools();
           const tool = availableTools.find(tool => tool.name === name);
           if (!tool) {
             throw new Error(`Tool '${name}' not found`);
           }
-          const toolCallResult  = await tool.execute(inputArgs, context);
+          const toolCallResult = await toolsService.executeTool(name, inputArgs, context);
           
           return {
             jsonrpc: '2.0',
@@ -341,17 +284,10 @@ export class McpServer extends EventEmitter {
           return {
             jsonrpc: '2.0',
             id,
-            result: {
-              prompts: availablePrompts.map(definition => ({
+            result: {              prompts: availablePrompts.map(definition => ({
                 name: definition.name,
                 description: definition.description,
-                arguments: definition.parameters ? Object.entries(definition.parameters)
-                .map(([field, parameter]) => ({
-                  name: parameter.name,
-                  description: parameter.description,
-                  type: parameter.type,
-                  required: parameter.required,
-                })) : []
+                arguments: definition.arguments || []
               }))
             }
           };
@@ -444,10 +380,20 @@ export class McpServer extends EventEmitter {
   removeTool(name: string): void {
     // This functionality is now handled by toolsService
   }
-
   registerPrompt(definition: PromptDefinition, handler: PromptHandler): void {
+    // Convert PromptDefinition to Prompt interface
+    const prompt: Prompt = {
+      name: definition.name,
+      description: definition.description || '',
+      arguments: definition.parameters ? Object.entries(definition.parameters).map(([name, param]) => ({
+        name: name,
+        description: param.description,
+        required: param.required
+      })) : []
+    };
+    
     // Delegate to the promptsService
-    promptsService.registerPrompt(definition, handler);
+    promptsService.registerPrompt(prompt, handler);
   }
 
   removePrompt(name: string): void {  
