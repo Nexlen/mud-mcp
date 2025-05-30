@@ -37,6 +37,7 @@
 - ✅ **Added battle system** - players can fight monsters when present in rooms
 - ✅ **Fixed item system** - added missing torch, key, potion, and gold item definitions
 - ✅ **Enhanced state management** - proper TOOLS_CHANGED events emitted when game state changes
+- ✅ **File cleanup** - removed duplicate `promptsService_new.ts` file
 
 ### Dynamic Tool System Features
 - ✅ Tools are contextual based on current room state

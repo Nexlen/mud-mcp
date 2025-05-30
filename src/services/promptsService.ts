@@ -76,10 +76,9 @@ class PromptsService extends EventEmitter {
         if (definition.name === 'quest_prompt') {
           return room && room.hasQuest && !playerState.hasQuest;
         }
-        
-        // Battle prompt is only available if monster is present
+          // Battle prompt is only available if monster is present
         if (definition.name === 'battle_prompt') {
-          return playerState.monsterPresent && room && room.monsters && room.monsters.length > 0;
+          return room && room.monsters && room.monsters.length > 0;
         }
         
         // Default to available
@@ -406,7 +405,7 @@ class PromptsService extends EventEmitter {
         const world = stateService.getWorld();
         const room = world.rooms[playerState.room];
         
-        if (!room || !playerState.monsterPresent || !room.monsters || room.monsters.length === 0) {
+        if (!room || room.monsters.length === 0) {
           return {
             messages: [
               { 
