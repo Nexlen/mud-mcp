@@ -67,6 +67,22 @@ export const initialGameWorld: GameWorld = {
 
 // Game items configuration
 export const items: Record<string, Item> = {
+  torch: {
+    name: 'Torch',
+    description: 'A burning torch that provides light in dark places.'
+  },
+  key: {
+    name: 'Rusty Key',
+    description: 'An old rusty key that might open something important.'
+  },
+  potion: {
+    name: 'Health Potion',
+    description: 'A glowing red potion that restores health.'
+  },
+  gold: {
+    name: 'Gold Coins',
+    description: 'A pile of shiny gold coins.'
+  },
   ancient_scroll: {
     name: 'Ancient Scroll',
     description: 'A weathered scroll with mysterious writings.'

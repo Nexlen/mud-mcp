@@ -16,16 +16,97 @@ interface ToolError extends Error {
  * Tools Service
  * 
  * Implements the game actions (tools) available to players
+ * Updated for MCP 2025-03-26 specification compliance
  */
 class ToolsService extends EventEmitter {
   private tools: { [name: string]: Tool } = {};
+  private toolHandlers: { [name: string]: (params: Record<string, unknown>, context: McpContext) => Promise<ToolResult> } = {};
   
   constructor() {
     super();
     this.registerDefaultTools();
   }
 
-  Look = async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
+  /**
+   * Register a new tool with its handler
+   */
+  registerTool(tool: Tool, handler: (params: Record<string, unknown>, context: McpContext) => Promise<ToolResult>): void {
+    this.tools[tool.name] = tool;
+    this.toolHandlers[tool.name] = handler;
+    this.emit('toolRegistered', tool.name);
+  }
+
+  /**
+   * Execute a tool by name
+   */
+  async executeTool(name: string, params: Record<string, unknown>, context: McpContext): Promise<ToolResult> {
+    const handler = this.toolHandlers[name];
+    if (!handler) {
+      return {
+        content: [{ type: 'text', text: `Tool '${name}' not found.` }],
+        isError: true
+      };
+    }
+
+    try {
+      return await handler(params, context);
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error executing tool '${name}': ${error instanceof Error ? error.message : 'Unknown error'}` }],
+        isError: true
+      };
+    }
+  }
+  /**
+   * Get all available tools based on player's current state
+   */
+  getAvailableTools(playerId?: string): Tool[] {
+    if (!playerId) {
+      // Return basic tools if no player context
+      return [this.tools.look, this.tools.inventory].filter(Boolean);
+    }
+
+    const playerState = stateService.getPlayerState(playerId);
+    if (!playerState) {
+      return [this.tools.look, this.tools.inventory].filter(Boolean);
+    }
+
+    const world = stateService.getWorld();
+    const room = world.rooms[playerState.room];
+    if (!room) {
+      return [this.tools.look, this.tools.inventory].filter(Boolean);
+    }
+
+    const availableTools: Tool[] = [];
+
+    // Always available tools
+    if (this.tools.look) availableTools.push(this.tools.look);
+    if (this.tools.inventory) availableTools.push(this.tools.inventory);
+
+    // Movement tools - available if there are exits
+    if (Object.keys(room.exits).length > 0 && this.tools.move) {
+      availableTools.push(this.tools.move);
+    }
+
+    // Take tool - available if there are items in the room
+    if (room.items.length > 0 && this.tools.take) {
+      availableTools.push(this.tools.take);
+    }
+
+    // Battle tool - available if there are monsters in the room
+    if (room.monsters.length > 0 && this.tools.battle) {
+      availableTools.push(this.tools.battle);
+    }
+
+    return availableTools;
+  }
+
+  // ========== TOOL HANDLERS ==========
+
+  /**
+   * Look around the current room
+   */
+  private lookHandler = async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
     if (!context.sessionId) {
       return {
         content: [{ type: 'text', text: 'Error: Session initialization failed.' }],
@@ -70,9 +151,8 @@ class ToolsService extends EventEmitter {
           return item ? item.name : itemId;
         }).join(', ')}.` 
       : '\nThere are no items here.';
-    
-    // Describe any monsters present
-    const monsterText = playerState.monsterPresent && room.monsters.length > 0
+      // Describe any monsters present
+    const monsterText = room.monsters.length > 0
       ? `\nA ${room.monsters.map(monsterId => {
           const monster = monsters[monsterId];
           return monster ? monster.name : monsterId;
@@ -92,7 +172,10 @@ class ToolsService extends EventEmitter {
     };
   };
 
-  Move = async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
+  /**
+   * Move to a different room
+   */
+  private moveHandler = async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
     try {
       if (!context.sessionId) {
         return {
@@ -109,7 +192,7 @@ class ToolsService extends EventEmitter {
         };
       }
 
-      const { direction } = params as unknown as { direction: string };
+      const { direction } = params as { direction: string };
       const playerState = stateService.getPlayerState(session.playerId);
       const world = stateService.getWorld();
       
@@ -123,385 +206,348 @@ class ToolsService extends EventEmitter {
       const currentRoom = world.rooms[playerState.room];
       if (!currentRoom) {
         return {
-          content: [{ type: 'text', text: 'Error: Invalid room.' }],
+          content: [{ type: 'text', text: 'Error: Current room not found.' }],
           isError: true
         };
       }
       
-      // Check if the direction is valid
-      const nextRoomId = currentRoom.exits[direction];
-      if (!nextRoomId) {
+      const targetRoomId = currentRoom.exits[direction.toLowerCase()];
+      if (!targetRoomId) {
         return {
-          content: [{ type: 'text', text: `You cannot go ${direction} from here.` }],
-          isError: true
+          content: [{ type: 'text', text: `You can't go ${direction} from here.` }],
+          isError: false
         };
       }
       
-      // Update player's room 
-      const success = stateService.movePlayer(session.playerId, direction);
-      if (!success) {
+      const targetRoom = world.rooms[targetRoomId];
+      if (!targetRoom) {
         return {
-          content: [{ type: 'text', text: `Could not move ${direction}.` }],
+          content: [{ type: 'text', text: 'Error: Target room not found.' }],
           isError: true
         };
-      }
+      }      // Update player's room
+      stateService.updatePlayerRoom(session.playerId, targetRoomId);
       
-      // After moving, call look to show the new room description
-      return await this.Look({}, context);
-    } catch (error) {
-      // console.log('Error in move tool:', error);
+      // Emit tools changed since available tools depend on room contents
+      stateService.emit('TOOLS_CHANGED', { playerId: session.playerId });
+      
       return {
-        content: [{ type: 'text', text: 'An error occurred while moving.' }],
+        content: [{ 
+          type: 'text', 
+          text: `You move ${direction} to ${targetRoom.name}.` 
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error moving: ${error instanceof Error ? error.message : 'Unknown error'}` }],
         isError: true
       };
     }
   };
 
-  Inventory = async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
+  /**
+   * Check inventory
+   */
+  private inventoryHandler = async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
     if (!context.sessionId) {
-      throw new Error('No active session');
+      return {
+        content: [{ type: 'text', text: 'Error: Session initialization failed.' }],
+        isError: true
+      };
     }
 
     const session = stateService.getSession(context.sessionId);
     if (!session) {
       return {
-        content: [{ type: 'text', text: 'Session not found. Please restart the game.' }],
+        content: [{ type: 'text', text: 'Error: Invalid session. Please try again.' }],
         isError: true
       };
     }
-
+    
     const playerState = stateService.getPlayerState(session.playerId);
     if (!playerState) {
       return {
-        content: [{ type: 'text', text: 'Player state not found.' }]
+        content: [{ type: 'text', text: 'Error: Could not find player state. Please try again.' }],
+        isError: true
       };
     }
-
+    
     if (playerState.inventory.length === 0) {
       return {
         content: [{ type: 'text', text: 'Your inventory is empty.' }]
       };
     }
-
-    const inventoryItems = playerState.inventory
-      .map(itemId => {
-        const item = items[itemId];
-        return item ? `${item.name}: ${item.description}` : itemId;
-      })
-      .join('\n');
-
+    
+    const itemList = playerState.inventory.map(itemId => {
+      const item = items[itemId];
+      return item ? item.name : itemId;
+    }).join(', ');
+    
     return {
-      content: [
-        { type: 'text', text: 'Your inventory contains:' },
-        { type: 'text', text: inventoryItems }
-      ]
+      content: [{ 
+        type: 'text', 
+        text: `You are carrying: ${itemList}.` 
+      }]
     };
-  }
-  
+  };
 
   /**
-   * Get all available tools for a player
+   * Take an item from the room
    */
-  getAvailableTools(playerId: string): Tool[] {
-    // console.log('getAvailableTools', playerId);
-    const playerState = stateService.getPlayerState(playerId);
-    if (!playerId || playerId === 'all' || !playerState) {
-      return [];
+  private takeHandler = async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
+    if (!context.sessionId) {
+      return {
+        content: [{ type: 'text', text: 'Error: Session initialization failed.' }],
+        isError: true
+      };
+    }
+
+    const session = stateService.getSession(context.sessionId);
+    if (!session) {
+      return {
+        content: [{ type: 'text', text: 'Error: Invalid session. Please try again.' }],
+        isError: true
+      };
+    }
+
+    const { item } = params as { item: string };
+    const playerState = stateService.getPlayerState(session.playerId);
+    if (!playerState) {
+      return {
+        content: [{ type: 'text', text: 'Error: Could not find player state. Please try again.' }],
+        isError: true
+      };
     }
 
     const world = stateService.getWorld();
     const room = world.rooms[playerState.room];
+    if (!room) {
+      return {
+        content: [{ type: 'text', text: 'Error: Invalid room.' }],
+        isError: true
+      };
+    }    // Find the item ID by name
+    const itemId = Object.keys(items).find(id => 
+      items[id].name.toLowerCase() === item.toLowerCase()
+    );
 
-    // Base tools always available
-    const tools: Tool[] = [
-      {
-        name: 'look',
-        description: 'Provides a description of your current surroundings.',
-        execute: async (params, context) => {
-          return this.Look(params, context);
-        }
-      },
-      {
-        name: 'move',
-        description: 'Moves you in the specified direction.',
-        parameters: {
-          direction: {
-            description: 'The direction to move (north, south, east, west).',
-            required: true,
-            type: 'string'
-          }
-        },
-        execute: async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
-          return await this.Move(params, context);
-        }
-      },
-      {
-        name: 'inventory',
-        description: 'Check your inventory contents.',
-        execute: async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
-          return await this.Inventory(params, context);
-        }
-      }
-    ];
-
-    // Add conditional tools based on state
-    if (room.items.length > 0) {
-      tools.push({
-        name: 'pick_up',
-        description: 'Pick up an item in the room.',
-        parameters: {
-          item: {
-            description: 'The item to pick up.',
-            required: true,
-            type: 'string'
-          }
-        },
-        execute: async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
-            if (!context.sessionId) {
-              throw new Error('No active session');
-            }
-            const { item } = params as unknown as { item: string };
-        
-            const session = stateService.getSession(context.sessionId);
-            if (!session) {
-              return {
-                content: [{ type: 'text', text: 'Session not found. Please restart the game.' }],
-                isError: true
-              };
-            }
-        
-            const success = stateService.addItemToInventory(session.playerId, item);
-            if (!success) {
-              return {
-                content: [{ type: 'text', text: `There is no ${item} here.` }]
-              };
-            }
-        
-            const itemName = items[item]?.name || item;
-           
-            return {
-              content: [{ type: 'text', text: `You picked up the ${itemName}.` }]
-            };
-          }
-      });
-    }
-
-    if (playerState.monsterPresent && room.monsters?.length > 0) {
-      tools.push({
-        name: 'battle',
-        description: 'Fight a monster',
-        execute: async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
-            if (!context.sessionId) {
-              throw new Error('No active session');
-            }
-        
-            const session = stateService.getSession(context.sessionId);
-            if (!session) {
-              return {
-                content: [{ type: 'text', text: 'Session not found. Please restart the game.' }],
-                isError: true
-              };
-            }
-        
-            if (!stateService.canBattle(session.playerId)) {
-              return {
-                content: [{ type: 'text', text: 'There are no enemies to fight here.' }]
-              };
-            }
-        
-            const battleResult = stateService.battle(session.playerId);
-            if (!battleResult.monsterName) {
-              return {
-                content: [{ type: 'text', text: 'There are no enemies to fight here.' }]
-              };
-            }
-        
-            const monsterName = monsters[battleResult.monsterName]?.name || battleResult.monsterName;
-            return {
-              content: [{ 
-                type: 'text', 
-                text: battleResult.success 
-                  ? `You defeated the ${monsterName}!`
-                  : `The ${monsterName} wounded you. You need to try again.`
-              }]
-            };
-          }
-      });
-    }
-
-    if (room.hasQuest && !playerState.hasQuest) {
-      tools.push({
-        name: 'accept_quest',
-        description: 'Accept a quest',
-        execute: async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
-            if (!context.sessionId) {
-              throw new Error('No active session');
-            }
-        
-            const session = stateService.getSession(context.sessionId);
-            if (!session) {
-              return {
-                content: [{ type: 'text', text: 'Session not found. Please restart the game.' }],
-                isError: true
-              };
-            }
-        
-            const success = stateService.acceptQuest(session.playerId);
-            if (!success) {
-              return {
-                content: [{ type: 'text', text: 'There is no quest available here.' }]
-              };
-            }
-        
-            return {
-              content: [{ type: 'text', text: 'You accept the quest: "The Lost Artifact". Find the ancient artifact hidden in the dungeon.' }]
-            };
-          }
-      });
-    }
-
-    if (room.id === 'treasure_room' && !room.monsters?.includes('dragon')) {
-      tools.push({
-        name: 'open_chest',
-        description: 'Open a treasure chest',
-        execute: async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
-            if (!context.sessionId) {
-              throw new Error('No active session');
-            }
-        
-            const session = stateService.getSession(context.sessionId);
-            if (!session) {
-              return {
-                content: [{ type: 'text', text: 'Session not found. Please restart the game.' }],
-                isError: true
-              };
-            }
-        
-            const playerState = stateService.getPlayerState(session.playerId);
-            if (!playerState) {
-              return {
-                content: [{ type: 'text', text: 'Player state not found.' }]
-              };
-            }
-        
-            if (playerState.room !== 'treasure_room') {
-              return {
-                content: [{ type: 'text', text: 'There are no treasure chests here.' }]
-              };
-            }
-        
-            const room = stateService.getWorld().rooms[playerState.room];
-            if (!room.monsters.includes('dragon')) {
-              // Only allow opening chest if dragon is defeated
-              stateService.addItemToInventory(session.playerId, 'magic_gem');
-              return {
-                content: [{ type: 'text', text: 'You open the treasure chest and find a magical gem glowing with mysterious energy!' }]
-              };
-            } else {
-              return {
-                content: [{ type: 'text', text: 'The dragon guards the treasure chest. You must defeat it first!' }]
-              };
-            }
-          }
-      });
-    }
-
-    return tools;
-  }
-  
-  /**
-   * Register a new tool
-   */
-  registerTool(tool: Tool): void {
-    this.tools[tool.name] = tool;
-    this.emit('toolRegistered', tool.name);
-  }
-  
-  // /**
-  //  * Execute a tool action
-  //  */
-  // async executeTool(name: string, playerId: string, params: ToolParameters = {}): Promise<ToolResponse> {
-  //   const tool = this.tools[name];
-  //   if (!tool) {
-  //     return {
-  //       content: [{ type: 'text', text: `Tool '${name}' not found.` }],
-  //       isError: true
-  //     };
-  //   }
-    
-  //   // Get player state using session ID if provided, otherwise use player ID
-  //   let playerState;
-  //   const session = stateService.getSession(playerId);
-  //   if (session) {
-  //     playerState = stateService.getPlayerState(session.playerId);
-  //   } else {
-  //     playerState = stateService.getPlayerState(playerId);
-  //   }
-
-  //   if (!playerState) {
-  //     return {
-  //       content: [{ type: 'text', text: 'Session not found. Please restart the game.' }],
-  //       isError: true
-  //     };
-  //   }
-    
-  //   try {
-  //     const availableTools = this.getAvailableTools(playerState.player_id);
-  //     if (!availableTools.find(t => t.name === name)) {
-  //       return {
-  //         content: [{ type: 'text', text: `The action '${name}' is not available right now.` }],
-  //         isError: true
-  //       };
-  //     }
+    if (!itemId || !room.items.includes(itemId)) {
+      // Debug info - let's see what's actually in the room
+      const availableItems = room.items.map(id => items[id]?.name || id).join(', ');
+      const debugText = room.items.length > 0 
+        ? `Available items in this room: ${availableItems}. Looking for: ${item}`
+        : `No items in this room. Looking for: ${item}`;
       
-  //     return await tool.execute(params, { sessionId: session?.id });
-  //   } catch (error) {
-  //     const toolError = error as ToolError;
-  //     // console.log(`Error executing tool ${name}:`, toolError);
-  //     return {
-  //       content: [{ type: 'text', text: `Error executing '${name}': ${toolError.message}` }],
-  //       isError: true
-  //     };
-  //   }
-  // }
-  
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `There is no ${item} here to take. ${debugText}` 
+        }],
+        isError: false
+      };
+    }// Add to inventory and remove from room
+    stateService.addItemToInventory(session.playerId, itemId);
+    stateService.removeItemFromRoom(playerState.room, itemId);
+
+    // Emit tools changed since items in room changed
+    stateService.emit('TOOLS_CHANGED', { playerId: session.playerId });
+
+    return {
+      content: [{ 
+        type: 'text', 
+        text: `You take the ${items[itemId].name}.` 
+      }]
+    };
+  };
+
   /**
-   * Register the default game tools
+   * Battle a monster in the room
    */
-  public registerDefaultTools(): void {
-    // Look tool
+  private battleHandler = async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
+    if (!context.sessionId) {
+      return {
+        content: [{ type: 'text', text: 'Error: Session initialization failed.' }],
+        isError: true
+      };
+    }
+
+    const session = stateService.getSession(context.sessionId);
+    if (!session) {
+      return {
+        content: [{ type: 'text', text: 'Error: Invalid session. Please try again.' }],
+        isError: true
+      };
+    }
+
+    const { monster } = params as { monster: string };
+    const playerState = stateService.getPlayerState(session.playerId);
+    if (!playerState) {
+      return {
+        content: [{ type: 'text', text: 'Error: Could not find player state. Please try again.' }],
+        isError: true
+      };
+    }
+
+    const world = stateService.getWorld();
+    const room = world.rooms[playerState.room];
+    if (!room) {
+      return {
+        content: [{ type: 'text', text: 'Error: Invalid room.' }],
+        isError: true
+      };
+    }
+
+    // Find the monster by name
+    const monsterId = Object.keys(monsters).find(id => 
+      monsters[id].name.toLowerCase() === monster.toLowerCase()
+    );
+
+    if (!monsterId || !room.monsters.includes(monsterId)) {
+      return {
+        content: [{ type: 'text', text: `There is no ${monster} here to battle.` }],
+        isError: false
+      };
+    }
+
+    const monsterData = monsters[monsterId];
+    
+    // Simple battle logic - player has 50% chance to win
+    const playerWins = Math.random() > 0.5;
+    
+    if (playerWins) {
+      // Remove monster from room
+      const roomData = world.rooms[playerState.room];
+      roomData.monsters = roomData.monsters.filter(id => id !== monsterId);
+      
+      // Update player state
+      stateService.updatePlayerRoom(session.playerId, playerState.room);
+      
+      // Emit tools changed since monsters in room changed
+      stateService.emit('TOOLS_CHANGED', { playerId: session.playerId });
+      
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `You successfully defeat the ${monsterData.name}! The creature falls and disappears into shadows.` 
+        }]
+      };
+    } else {
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `The ${monsterData.name} proves too strong! You retreat but remain in the room. Try again when you're ready.` 
+        }]
+      };
+    }
+  };
+
+  /**
+   * Register the default game tools with MCP 2025-03-26 compliance
+   */
+  private registerDefaultTools(): void {
+    // Look tool - read-only operation
     this.registerTool({
       name: 'look',
-      description: 'Provides a description of the player\'s current room.',
-      execute: async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult>=> {
-        return this.Look(params, context);
+      description: 'Examine your current surroundings and see what\'s available in the room.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        required: []
+      },
+      annotations: {
+        title: 'Look Around',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
       }
-    });
+    }, this.lookHandler);
     
-    // Move tool
+    // Move tool - state-changing but non-destructive
     this.registerTool({
       name: 'move',
-      description: 'Moves the player to a different room.',
-      parameters: {
-        direction: {
-          description: 'The direction to move (north, south, east, west).',
-          required: true,
-          type: 'string'
-        }
+      description: 'Move to a different room in the specified direction.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          direction: {
+            type: 'string',
+            enum: ['north', 'south', 'east', 'west'],
+            description: 'The direction to move (north, south, east, west)'
+          }
+        },
+        required: ['direction']
       },
-      execute: async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
-        return this.Move(params, context);
+      annotations: {
+        title: 'Move',
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
       }
-    });
+    }, this.moveHandler);
     
-    // Pick up tool
+    // Inventory tool - read-only operation
     this.registerTool({
       name: 'inventory',
-      description: 'Check your inventory contents.',
-      execute: async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult>=> {
-        return this.Inventory(params, context);
+      description: 'Check your inventory contents and see what items you\'re carrying.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        required: []
+      },
+      annotations: {
+        title: 'Check Inventory',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
       }
-    });
+    }, this.inventoryHandler);    // Take tool - state-changing operation
+    this.registerTool({
+      name: 'take',
+      description: 'Take an item from the current room and add it to your inventory.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          item: {
+            type: 'string',
+            description: 'The name of the item to take'
+          }
+        },
+        required: ['item']
+      },
+      annotations: {
+        title: 'Take Item',
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      }
+    }, this.takeHandler);
+
+    // Battle tool - destructive operation
+    this.registerTool({
+      name: 'battle',
+      description: 'Engage in combat with a monster in the current room.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          monster: {
+            type: 'string',
+            description: 'The name of the monster to battle'
+          }
+        },
+        required: ['monster']
+      },
+      annotations: {
+        title: 'Battle Monster',
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false
+      }
+    }, this.battleHandler);
   }
 }
 
