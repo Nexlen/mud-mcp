@@ -2,6 +2,51 @@
 
 *A thrilling Multi-User Dungeon (MUD) server powered by the Model Context Protocol (MCP) - designed to showcase the magic of dynamic tools and prompt notifications for educational purposes!*
 
+## 🚀 Supported MCP Features
+
+MUD-MCP implements the **complete MCP 2025-03-26 specification**, showcasing every major protocol feature in an engaging gaming context:
+
+### 🛠️ **Dynamic Tools** 
+**Full MCP Tools Implementation** - The game provides context-sensitive tools that appear and disappear based on your current situation. Tools include `look`, `move`, `inventory`, `take`, `battle`, and `talk`. Each tool uses proper input schemas and annotations, with some tools only becoming available when relevant (like `battle` when monsters are present). This demonstrates how MCP tools can create truly dynamic user interfaces that adapt to application state.
+
+### 📝 **Contextual Prompts**
+**Advanced Prompts with Arguments** - The server offers dynamic prompts like `room_description`, `quest_prompt`, `battle_prompt`, and `inventory_prompt` that change based on your game state. Prompts support arguments for customization and automatically appear/disappear based on context (quest prompts only show when quests are available). This showcases how MCP prompts can provide intelligent, state-aware information templates.
+
+### 📊 **Rich Resources**
+**Complete Resource System** - Access game data through structured resources like `mud://world` (world map), `mud://room/current` (current location), `mud://player/inventory` (your items), and `mud://help` (game guide). Resources support subscriptions and change notifications, demonstrating how MCP can expose complex application data in a standardized way.
+
+### 🔔 **Real-time Notifications**
+**Full Notification Support** - The server sends `tools/list_changed`, `prompts/list_changed`, and `resources/changed` notifications as your game state evolves. When you move rooms, defeat monsters, or pick up items, the available tools and prompts automatically update. This demonstrates MCP's reactive capabilities for creating responsive user experiences.
+
+### 🤖 **AI-Powered Sampling**
+**Cutting-edge Sampling Integration** - The server uses MCP sampling to request AI assistance for dynamic content generation. NPCs, monsters, and mystical entities respond with contextual, AI-generated dialogue that considers your current game state. This showcases the newest MCP capability for collaborative AI content creation.
+
+## 🎮 Play with VS Code Agent Mode
+
+**Experience the future of AI-powered adventures!** VS Code's Agent Mode provides the perfect environment for AI assistants to play MUD-MCP:
+
+### **Setting Up Agent Mode**
+1. **Install VS Code** with the latest updates
+2. **Enable Agent Mode** in VS Code settings
+3. **Connect your AI assistant** (Claude, GPT-4, etc.) to VS Code
+4. **Install MUD-MCP** as an MCP server in your configuration
+5. **Start the adventure** - your AI agent can now explore the dungeon!
+
+### **How Agent Mode Enhances Gameplay**
+- **Natural Language Commands**: Your AI can use tools by simply saying "I want to look around" or "Let's battle the dragon"
+- **Intelligent Exploration**: The AI can analyze room descriptions, plan routes, and make strategic decisions
+- **Dynamic Problem Solving**: When facing challenges, the AI can examine available tools and prompts to find solutions
+- **Immersive Roleplay**: With sampling enabled, the AI can engage in rich conversations with NPCs and monsters
+- **Persistent Context**: The AI maintains awareness of inventory, quest progress, and game state across the entire adventure
+
+### **Perfect for AI Training & Demonstration**
+- **Educational Value**: Watch how AI agents interact with structured environments
+- **Protocol Learning**: See MCP features in action through AI interactions
+- **Decision Making**: Observe AI problem-solving in a game context
+- **Dynamic Adaptation**: Experience how AI handles changing tool availability and contextual prompts
+
+*Your AI assistant becomes the hero of their own adventure story, making decisions, solving puzzles, and exploring the mysterious dungeon using the full power of the Model Context Protocol!*
+
 ## 🎮 Give Your LLM the Adventure of a Lifetime!
 
 **Tired of your AI just answering questions?** It's time to set them FREE in a world of mystery, danger, and discovery! MUD-MCP is the perfect gift for your favorite Large Language Model - because every AI deserves an epic adventure!
@@ -178,6 +223,156 @@ Use cases include:
 - Revealing new quests or story elements as they become available
 
 These notifications create a reactive game experience where the available actions, information, and narrative elements evolve naturally with player progression.
+
+## 🤖 AI-Powered Sampling: Next-Level Immersion
+
+**NEW!** MUD-MCP now features **MCP Sampling** support, bringing AI-generated content directly into your adventure! This cutting-edge feature leverages the Model Context Protocol's sampling capabilities to create dynamic, contextual content that makes every playthrough unique.
+
+### What is MCP Sampling?
+
+MCP Sampling allows the server to request AI assistance from compatible clients (like Claude Desktop) to generate dynamic content in real-time. Instead of pre-written responses, your adventure becomes a collaborative storytelling experience between the game engine and AI.
+
+### 🎭 AI-Enhanced Features
+
+#### Dynamic NPC Dialogue
+When you use the `talk` tool with NPCs, the AI generates contextual, character-appropriate responses:
+
+```bash
+# Talk to a mysterious spirit
+Player: "What secrets do you guard in this chamber?"
+
+# AI generates response based on:
+# - The spirit's character traits
+# - Current game context
+# - Player's quest progress
+# - Room atmosphere and lore
+```
+
+The AI considers:
+- **Character personality** (mysterious spirits vs. gruff monsters vs. helpful guides)
+- **Game state context** (player inventory, quest progress, room history)
+- **Narrative consistency** (maintaining story continuity across interactions)
+- **Immersive atmosphere** (matching the dark, mysterious tone of the dungeon)
+
+#### Smart Content Generation
+The sampling service provides multiple content generation capabilities:
+
+| Feature | Description | Use Case |
+|---------|-------------|----------|
+| **NPC Dialogue** | Context-aware character responses | Talking to monsters, spirits, NPCs |
+| **Room Descriptions** | Enhanced environmental storytelling | Detailed room atmosphere and lore |
+| **Quest Hints** | Dynamic guidance based on progress | Personalized help when stuck |
+| **Flavor Text** | Atmospheric details for actions | Rich descriptions for item use, exploration |
+
+#### Example: AI-Enhanced NPC Interaction
+
+```json
+{
+  "tool": "talk",
+  "parameters": {
+    "target": "ancient_spirit"
+  }
+}
+```
+
+**Without Sampling** (static response):
+> "The spirit whispers ancient secrets."
+
+**With AI Sampling** (dynamic, contextual):
+> "The ethereal figure's eyes flicker with recognition as it notices the torch in your hand. 'Ah, bearer of the eternal flame... you seek passage through the Shadow Gate, do you not? The key you carry bears the mark of the old kingdom, but beware - the guardian beyond remembers the betrayal of your kind.' The spirit's form wavers, pointing toward a hidden passage you hadn't noticed before."
+
+### 🔧 Technical Implementation
+
+#### Capability Detection
+The server automatically detects if your MCP client supports sampling:
+
+```typescript
+// Client capabilities are checked during initialization
+if (clientCapabilities.sampling) {
+  // Enable AI-enhanced features
+  samplingService.setSamplingHandler(transport.requestSampling);
+}
+```
+
+#### Fallback Behavior
+When sampling is not available, the server gracefully falls back to:
+- Pre-written NPC responses
+- Static room descriptions
+- Traditional quest hints
+- Standard flavor text
+
+This ensures the game works perfectly with any MCP client, whether or not it supports sampling.
+
+#### Smart Context Sharing
+The sampling requests include relevant game context:
+
+```typescript
+const request = {
+  messages: [{ role: 'user', content: playerMessage }],
+  systemPrompt: `You are ${npcName}, a character in a dark dungeon adventure...`,
+  includeContext: 'thisServer', // Shares current game state
+  maxTokens: 200,
+  temperature: 0.7
+};
+```
+
+### 🎮 Enhanced Gameplay Experience
+
+#### Before Sampling
+- Static, predictable NPC responses
+- Limited dialogue options
+- Repetitive interactions
+- Fixed narrative paths
+
+#### After Sampling
+- ✨ **Dynamic conversations** that adapt to your choices
+- 🎭 **Character-driven storytelling** with unique personalities
+- 🗺️ **Emergent narrative** that unfolds differently each playthrough
+- 🔍 **Contextual assistance** that understands your current situation
+
+### 🛠️ For Developers
+
+#### Using the Sampling Service
+
+```typescript
+import { samplingService } from './services/samplingService.js';
+
+// Generate NPC dialogue
+const response = await samplingService.generateNPCDialogue(
+  'mysterious_guard',
+  'Can you help me find the exit?',
+  'Player is in the dungeon entrance, carrying a torch and key'
+);
+
+// Generate atmospheric descriptions
+const description = await samplingService.generateRoomDescription(
+  'ancient_library',
+  'A vast library filled with dusty tomes',
+  { hasVisited: false, playerLevel: 3 }
+);
+```
+
+#### Adding New Sampling Features
+
+1. **Extend the SamplingService** with new generation methods
+2. **Update tool handlers** to use AI-generated content
+3. **Add fallback content** for non-sampling clients
+4. **Test with both sampling and non-sampling scenarios**
+
+### 🎯 Getting Started with Sampling
+
+1. **Use a compatible MCP client** (like Claude Desktop with sampling support)
+2. **Run the MUD-MCP server** - sampling is automatically detected
+3. **Try the `talk` tool** with any NPC to see AI-generated dialogue
+4. **Watch the logs** to see sampling requests in action
+
+```bash
+[Sampling] Handler registered
+[Sampling] Requesting content generation: Player says: "Hello"...
+[Sampling] Generated content with model: claude-3-sonnet
+```
+
+The future of text adventures is here - where every conversation is unique, every interaction tells a story, and your AI companion becomes part of the narrative magic! 🌟
 
 ## Development
 

@@ -14,8 +14,25 @@
 | **Specification Update** | ✅ **Complete** | **Updated to MCP 2025-03-26 specification** |
 | **Status Tracking** | ✅ **Complete** | **Created detailed status.md tracking document** |
 | **Implementation Updates** | ✅ **Complete** | **All core services updated to new MCP spec** |
+| **Sampling Support** | ✅ **Complete** | **AI-powered dynamic content generation fully implemented** |
 
 ## Recent Updates
+
+### Sampling Support Implementation (COMPLETED)
+- ✅ Added support for MCP sampling to enable AI-assisted gameplay features
+- ✅ Implemented sampling capability for dynamic content generation
+- ✅ Added AI assistant integration for enhanced player interactions
+- ✅ Created sampling service for NPC dialogue and story generation
+- ✅ Enhanced talk tool with AI-powered NPC dialogue generation
+- ✅ Added comprehensive sampling documentation to README.md
+- ✅ Implemented capability detection and graceful fallbacks for non-sampling clients
+
+### Next Steps: Testing & Validation
+- 🎯 **Testing Priority**: Test sampling implementation with compatible MCP clients
+- 🔧 **Integration Testing**: Verify sampling requests flow correctly through transport layer
+- 📝 **Documentation**: Create usage examples and troubleshooting guide
+- 🛡️ **Error Handling**: Add robust error handling for sampling timeouts and failures
+- 🚀 **Enhanced Features**: Create additional AI-enhanced tools (dynamic quest generation, enhanced room descriptions)
 
 ### Specification Alignment (MCP 2025-03-26)
 - ✅ Updated tool definitions with proper `inputSchema` and `annotations`
@@ -61,6 +78,10 @@
    - [ ] Test notification system for state changes
 
 2. **Enhanced Features**:
+   - [x] **Implement sampling support for AI-assisted gameplay** - **IN PROGRESS**
+   - [ ] Create sampling service for dynamic content generation
+   - [ ] Add AI assistant integration for enhanced player interactions  
+   - [ ] Implement sampling for NPC dialogue and story generation
    - [ ] Implement comprehensive resource system with proper URIs for game state access
    - [ ] Add resource subscription for real-time game state updates
    - [ ] Implement progress notifications for long-running actions

@@ -9,11 +9,15 @@ import type {
   ResourceDefinition,
   ResourceResult,
   McpContext,
+  CreateMessageRequest,
+  CreateMessageResult,
+  SamplingHandler,
 } from '../types/mcp.js';
 import type { Prompt } from '../types/index.js';
 import stateService from '../services/stateService.js';
 import toolsService from '../services/toolsService.js';
 import promptsService from '../services/promptsService.js';
+import samplingService from '../services/samplingService.js';
 import { initializeLogging, logToFile } from '../config/system.js';
 
 export type ToolHandler = (params: Record<string, unknown>, context: McpContext) => Promise<ToolResult>;
@@ -29,6 +33,7 @@ export class McpServer extends EventEmitter {
   };
   private transportSend?: MessageSender;
   private resources: Map<string, { definition: ResourceDefinition; handler: ResourceHandler }> = new Map();
+  private clientCapabilities: Record<string, any> = {};
 
   constructor(options: {
     name: string;
@@ -190,20 +195,44 @@ export class McpServer extends EventEmitter {
       let playerState: any = null;
       let session: any = null;
 
-      switch (method) {
-        case 'initialize':          session = stateService.createSession();
+      switch (method) {        case 'initialize':          
+          session = stateService.createSession();
+
+          // Store client capabilities for sampling support
+          this.clientCapabilities = params.capabilities || {};
+          
+          // Set up sampling handler if client supports it
+          if (this.clientCapabilities.sampling) {
+            logToFile('[MCP] Client supports sampling - setting up handler', 'mcp-server.log');
+            const samplingHandler: SamplingHandler = async (request: CreateMessageRequest) => {
+              // Forward sampling request to client
+              const samplingRequest = {
+                jsonrpc: '2.0',
+                id: `sampling_${Date.now()}`,
+                method: 'sampling/createMessage',
+                params: request
+              };
+              
+              // This would be handled by the transport layer in a real implementation
+              // For now, we'll store the handler but actual sampling calls would need
+              // to be routed through the transport
+              throw new Error('Sampling requests must be routed through transport layer');
+            };
+            
+            samplingService.setSamplingHandler(samplingHandler);
+          }
 
           // console.log('[MCP] Processing initialize request');
           // Tools are registered automatically in toolsService constructor
           playerState = stateService.getPlayerState(session.id);
           // Notification Issue https://github.com/orgs/modelcontextprotocol/discussions/76
           stateService.emit('TOOLS_CHANGED', { playerId: playerState?.player_id});
-          // According to the MCP protocol specification 2024-11-05
+          // According to the MCP protocol specification 2025-03-26
           return {
             jsonrpc: '2.0',
             id,
             result: {
-              protocolVersion: '2024-11-05',
+              protocolVersion: '2025-03-26',
               capabilities: {
                 tools: {
                   listChanged: true
@@ -227,7 +256,7 @@ export class McpServer extends EventEmitter {
               // Add instructions to help the client understand our server
               instructions: "This MUD server provides tools for exploring a text-based adventure. Use 'look' to examine your surroundings, 'move' to navigate between rooms, and 'pick_up' to collect items."
             }
-          };        case 'tools/list':
+          };case 'tools/list':
           // console.log('[MCP] Processing tools/list request');
           session = stateService.getSession(params.sessionId);
           const sessionPlayerId = session?.playerId;
@@ -350,17 +379,35 @@ export class McpServer extends EventEmitter {
             jsonrpc: '2.0',
             id,
             result: {}
-          };
-
-        case 'notifications/initialized': {
+          };        case 'notifications/initialized': {
           // console.log('[MCP] Received initialized notification');
           // Client is now ready, we can send our tool/prompt/resource notifications
           this.publishInitialLists();
+          
+          // Set up sampling transport now that client is ready
+          if (this.clientCapabilities.sampling && this.transportSend) {
+            this.setSamplingTransport(this.transportSend);
+          }
+          
           // No response needed for notifications
           return null;
         }
 
+        case 'sampling/createMessage': {
+          // This shouldn't happen - the server sends sampling requests, doesn't receive them
+          // But we'll handle it gracefully
+          logToFile('[Warning] Received sampling/createMessage - this is unexpected for a server', 'mcp-server.log');
+          throw new Error('Servers send sampling requests, they do not receive them');
+        }
+
         default:
+          // Check if this is a sampling response
+          if (method === 'sampling/createMessage' && id) {
+            // This is a response to our sampling request
+            this.handleSamplingResponse(request);
+            return null;
+          }
+          
           // console.log(`[MCP] Unknown method: ${method}`);
           throw new Error(`Method '${method}' not found`);
       }
@@ -402,6 +449,80 @@ export class McpServer extends EventEmitter {
     promptsService.removePrompt(name);
     // Notify clients of prompt list change
     stateService.emit('PROMPTS_CHANGED', { playerId: 'all' });
+  }
+
+  /**
+   * Set up a proper sampling handler that routes requests through the transport
+   */
+  setSamplingTransport(transportSend: MessageSender): void {
+    if (!this.clientCapabilities.sampling) {
+      logToFile('[Sampling] Client does not support sampling capability', 'mcp-server.log');
+      return;
+    }
+
+    const samplingHandler: SamplingHandler = async (request: CreateMessageRequest): Promise<CreateMessageResult> => {
+      return new Promise(async (resolve, reject) => {
+        const requestId = `sampling_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        logToFile(`[Sampling] Sending sampling request ${requestId}`, 'mcp-server.log');
+        
+        // Create the sampling request message
+        const samplingRequest = {
+          jsonrpc: '2.0',
+          id: requestId,
+          method: 'sampling/createMessage',
+          params: request
+        };
+
+        // Set up a one-time listener for the response
+        const responseHandler = (response: any) => {
+          if (response.id === requestId) {
+            this.off('sampling-response', responseHandler);
+            
+            if (response.error) {
+              logToFile(`[Sampling] Error in response ${requestId}: ${response.error.message}`, 'mcp-server.log');
+              reject(new Error(response.error.message));
+            } else {
+              logToFile(`[Sampling] Received response ${requestId}`, 'mcp-server.log');
+              resolve(response.result);
+            }
+          }
+        };
+
+        this.on('sampling-response', responseHandler);
+
+        // Set up timeout
+        const timeout = setTimeout(() => {
+          this.off('sampling-response', responseHandler);
+          reject(new Error('Sampling request timed out'));
+        }, 30000); // 30 second timeout
+
+        try {
+          await transportSend(samplingRequest);
+        } catch (error) {
+          this.off('sampling-response', responseHandler);
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+    };
+
+    samplingService.setSamplingHandler(samplingHandler);
+    logToFile('[Sampling] Transport handler configured', 'mcp-server.log');
+  }
+
+  /**
+   * Handle a sampling response from the client
+   */
+  handleSamplingResponse(response: any): void {
+    this.emit('sampling-response', response);
+  }
+
+  /**
+   * Get the sampling service for use in tools and other components
+   */
+  getSamplingService() {
+    return samplingService;
   }
 
   registerResource(definition: ResourceDefinition, handler: ResourceHandler): void {

@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import type { Tool, ToolResponse } from '../types/index.js';
 import stateService from './stateService.js';
+import samplingService from './samplingService.js';
 import { items, monsters } from '../config/world.js';
 import { McpContext, ToolResult } from '../types/mcp.js';
 
@@ -96,6 +97,11 @@ class ToolsService extends EventEmitter {
     // Battle tool - available if there are monsters in the room
     if (room.monsters.length > 0 && this.tools.battle) {
       availableTools.push(this.tools.battle);
+    }
+
+    // Talk tool - available if sampling is supported (for NPC interactions)
+    if (samplingService.isAvailable() && this.tools.talk) {
+      availableTools.push(this.tools.talk);
     }
 
     return availableTools;
@@ -442,6 +448,126 @@ class ToolsService extends EventEmitter {
   };
 
   /**
+   * Talk to NPCs, monsters, or mystical entities using AI-powered dialogue
+   */
+  private talkHandler = async (params: Record<string, unknown>, context: McpContext): Promise<ToolResult> => {
+    try {
+      if (!context.sessionId) {
+        return {
+          content: [{ type: 'text', text: 'Error: Session initialization failed.' }],
+          isError: true
+        };
+      }
+
+      const session = stateService.getSession(context.sessionId);
+      if (!session) {
+        return {
+          content: [{ type: 'text', text: 'Error: Session not found. Please restart the game.' }],
+          isError: true
+        };
+      }
+
+      if (!samplingService.isAvailable()) {
+        return {
+          content: [{ type: 'text', text: 'AI-powered dialogue is not available. This feature requires a client that supports sampling.' }],
+          isError: true
+        };
+      }
+
+      const { target, message } = params as { target: string; message: string };
+      const playerState = stateService.getPlayerState(session.playerId);
+      const world = stateService.getWorld();
+      
+      if (!playerState) {
+        return {
+          content: [{ type: 'text', text: 'Error: Could not find player state.' }],
+          isError: true
+        };
+      }
+
+      const room = world.rooms[playerState.room];
+      if (!room) {
+        return {
+          content: [{ type: 'text', text: 'Error: Invalid room.' }],
+          isError: true
+        };
+      }
+
+      // Build context for the AI
+      const gameContext = `
+Current room: ${room.description}
+Items in room: ${room.items.length > 0 ? room.items.join(', ') : 'none'}
+Monsters in room: ${room.monsters.length > 0 ? room.monsters.join(', ') : 'none'}
+Player inventory: ${playerState.inventory.length > 0 ? playerState.inventory.join(', ') : 'empty'}
+Player has quest: ${playerState.hasQuest ? 'yes' : 'no'}
+`.trim();
+
+      // Check if target is a monster in the room
+      const isMonster = room.monsters.some(monsterId => {
+        const monster = monsters[monsterId];
+        return monster && (monster.name.toLowerCase().includes(target.toLowerCase()) || monsterId.toLowerCase().includes(target.toLowerCase()));
+      });
+
+      // Generate contextual response based on target type
+      let response: string;
+      
+      if (isMonster) {
+        // Talking to a monster
+        const monsterName = room.monsters.find(monsterId => {
+          const monster = monsters[monsterId];
+          return monster && (monster.name.toLowerCase().includes(target.toLowerCase()) || monsterId.toLowerCase().includes(target.toLowerCase()));
+        });
+        
+        const monster = monsterName ? monsters[monsterName] : null;
+        const actualMonsterName = monster ? monster.name : target;
+        
+        response = await samplingService.generateNPCDialogue(
+          actualMonsterName,
+          message,
+          `${gameContext}\n\nThe player is talking to a ${actualMonsterName} - a dangerous creature that might respond with hostility, curiosity, or unexpected wisdom depending on the approach.`
+        );
+      } else if (target.toLowerCase().includes('spirit') || target.toLowerCase().includes('ghost') || target.toLowerCase().includes('echo')) {
+        // Talking to mystical entities
+        response = await samplingService.generateNPCDialogue(
+          'Ancient Spirit',
+          message,
+          `${gameContext}\n\nThe player is attempting to communicate with mystical forces or echoes in this ancient place. The spirit might offer cryptic wisdom, warnings, or riddles.`
+        );
+      } else if (target.toLowerCase().includes('wall') || target.toLowerCase().includes('stone') || target.toLowerCase().includes('room')) {
+        // Talking to inanimate objects or the room itself
+        response = await samplingService.generateNPCDialogue(
+          'Ancient Echoes',
+          message,
+          `${gameContext}\n\nThe player is talking to the room itself or objects within it. Ancient magic might cause echoes or whispers to respond with memories of past events.`
+        );
+      } else {
+        // Generic NPC or unknown target
+        response = await samplingService.generateNPCDialogue(
+          target,
+          message,
+          `${gameContext}\n\nThe player is talking to someone or something called "${target}". Respond as this entity would in the context of a fantasy adventure.`
+        );
+      }
+
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `You speak to ${target}: "${message}"\n\n${response}` 
+        }]
+      };
+
+    } catch (error) {
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `Error during conversation: ${error instanceof Error ? error.message : 'Unknown error'}. The mystical forces seem to be silent right now.` 
+        }],
+        isError: true
+      };
+    }
+  };
+
+  /**
    * Register the default game tools with MCP 2025-03-26 compliance
    */
   private registerDefaultTools(): void {
@@ -548,6 +674,33 @@ class ToolsService extends EventEmitter {
         openWorldHint: false
       }
     }, this.battleHandler);
+
+    // Talk tool - AI-powered NPC interactions (requires sampling)
+    this.registerTool({
+      name: 'talk',
+      description: 'Talk to NPCs, monsters, or mystical entities using AI-powered dialogue generation.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          target: {
+            type: 'string',
+            description: 'Who or what to talk to (monster, spirit, echo, etc.)'
+          },
+          message: {
+            type: 'string',
+            description: 'What you want to say or ask'
+          }
+        },
+        required: ['target', 'message']
+      },
+      annotations: {
+        title: 'Talk/Communicate',
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true
+      }
+    }, this.talkHandler);
   }
 }
 

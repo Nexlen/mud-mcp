@@ -116,3 +116,46 @@ export interface ResourceResult {
     text: string;
   }>;
 }
+
+// Sampling related types
+export interface SamplingMessage {
+  role: 'user' | 'assistant';
+  content: {
+    type: 'text' | 'image' | 'audio';
+    text?: string;
+    data?: string;
+    mimeType?: string;
+  };
+}
+
+export interface ModelPreferences {
+  hints?: Array<{ name?: string }>;
+  costPriority?: number; // 0-1
+  speedPriority?: number; // 0-1
+  intelligencePriority?: number; // 0-1
+}
+
+export interface CreateMessageRequest {
+  messages: SamplingMessage[];
+  systemPrompt?: string;
+  includeContext?: 'none' | 'thisServer' | 'allServers';
+  temperature?: number;
+  maxTokens: number;
+  stopSequences?: string[];
+  metadata?: Record<string, unknown>;
+  modelPreferences?: ModelPreferences;
+}
+
+export interface CreateMessageResult {
+  model: string;
+  role: 'assistant';
+  content: {
+    type: 'text' | 'image' | 'audio';
+    text?: string;
+    data?: string;
+    mimeType?: string;
+  };
+  stopReason?: 'endTurn' | 'stopSequence' | 'maxTokens' | 'error';
+}
+
+export type SamplingHandler = (request: CreateMessageRequest) => Promise<CreateMessageResult>;
